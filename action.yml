@@ -3,13 +3,13 @@ description: 'Check if branches are up to date and merge the base branch into th
 
 inputs:
   baseBranch:
-    required: true
-    description: 'The base branch to compare and merge.'
+    required: false
+    description: 'The base branch to compare and merge. Defaults to PR base ref when triggered by pull_request.'
     default: '${{ github.event.pull_request.base.ref }}'
 
   prBranch:
-    required: true
-    description: 'The pull request branch to compare and merge.'
+    required: false
+    description: 'The pull request branch to compare and merge. Defaults to PR head ref when triggered by pull_request.'
     default: '${{ github.event.pull_request.head.ref }}'
 
   autoMerge:
@@ -35,22 +35,43 @@ runs:
 
     - uses: fregante/setup-git-user@v2
 
+    - name: Validate inputs
+      shell: bash
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
+      run: |
+        if [ -z "${BASE_BRANCH}" ]; then
+          echo "::error::baseBranch is required. When running outside a pull_request event, provide it explicitly."
+          exit 1
+        fi
+        if [ -z "${PR_BRANCH}" ]; then
+          echo "::error::prBranch is required. When running outside a pull_request event, provide it explicitly."
+          exit 1
+        fi
+
     - name: Fetch branches and update working directory
       shell: bash
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        echo "Fetching pull request branch: ${{ inputs.prBranch }}"
-        git fetch origin ${{ inputs.prBranch }}
+        echo "Fetching pull request branch: ${PR_BRANCH}"
+        git fetch origin "${PR_BRANCH}"
 
-        echo "Fetching base branch: ${{ inputs.baseBranch }}"
-        git fetch origin ${{ inputs.baseBranch }}
+        echo "Fetching base branch: ${BASE_BRANCH}"
+        git fetch origin "${BASE_BRANCH}"
 
     - name: Check if branches are up to date
       shell: bash
       id: checkBranches
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        git checkout ${{ inputs.prBranch }}
-        BASE=$(git merge-base origin/${{ inputs.baseBranch }} HEAD)
-        if [ $BASE = $(git rev-parse origin/${{ inputs.baseBranch }}) ]; then
+        git checkout "${PR_BRANCH}"
+        BASE=$(git merge-base "origin/${BASE_BRANCH}" HEAD)
+        if [ $BASE = $(git rev-parse "origin/${BASE_BRANCH}") ]; then
           echo "Branches are up to date, skipping merge."
           echo "mergeRequired=false" >> $GITHUB_OUTPUT
         else
@@ -61,22 +82,31 @@ runs:
     - name: Build merge description
       id: merge-description
       shell: bash
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        DESCRIPTION=$(echo "${{ inputs.descriptionMerged }}" | sed "s|\[BASE_BRANCH\]|${{ inputs.baseBranch }}|g" | sed "s|\[PR_BRANCH\]|${{ inputs.prBranch }}|g")
+        DESCRIPTION=$(echo "${{ inputs.descriptionMerged }}" | sed "s|\[BASE_BRANCH\]|${BASE_BRANCH}|g" | sed "s|\[PR_BRANCH\]|${PR_BRANCH}|g")
         echo "mergeDescription=${DESCRIPTION}" >> $GITHUB_OUTPUT
 
     - name: Build reminder description
       id: reminder-description
       shell: bash
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        DESCRIPTION=$(echo "${{ inputs.descriptionReminder }}" | sed "s|\[BASE_BRANCH\]|${{ inputs.baseBranch }}|g" | sed "s|\[PR_BRANCH\]|${{ inputs.prBranch }}|g")
+        DESCRIPTION=$(echo "${{ inputs.descriptionReminder }}" | sed "s|\[BASE_BRANCH\]|${BASE_BRANCH}|g" | sed "s|\[PR_BRANCH\]|${PR_BRANCH}|g")
         echo "reminderDescription=${DESCRIPTION}" >> $GITHUB_OUTPUT
 
     - name: Merge base branch into PR branch
       shell: bash
       if: steps.checkBranches.outputs.mergeRequired == 'true' && inputs.autoMerge == 'true'
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        git merge --no-edit --no-commit origin/${{ inputs.baseBranch }}
+        git merge --no-edit --no-commit "origin/${BASE_BRANCH}"
         if [ $? -ne 0 ]; then
           echo "Merge conflict detected. Please resolve conflicts before merging."
           exit 1
@@ -86,8 +116,11 @@ runs:
     - name: Push changes
       shell: bash
       if: steps.checkBranches.outputs.mergeRequired == 'true' && inputs.autoMerge == 'true'
+      env:
+        PR_BRANCH: ${{ inputs.prBranch }}
+        BASE_BRANCH: ${{ inputs.baseBranch }}
       run: |
-        git push origin ${{ inputs.prBranch }}
+        git push origin "${PR_BRANCH}"
 
     - name: Command on PR to remind the PR branch is not up to date
       if: steps.checkBranches.outputs.mergeRequired == 'true' && inputs.autoMerge == 'false'
